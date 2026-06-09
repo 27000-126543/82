@@ -303,9 +303,11 @@ let refreshTimer: number | null = null
 
 function refreshData() {
   refreshing.value = true
+  const beforeCount = store.maintenanceOrders.length
+
   store.equipments.forEach((eq: Equipment) => {
     if (eq.status === 'running') {
-      eq.runHours += Math.floor(Math.random() * 2)
+      eq.runHours += Math.floor(Math.random() * 5)
       if (eq.temperature !== undefined) {
         eq.temperature = Math.round((eq.temperature + (Math.random() - 0.5)) * 10) / 10
       }
@@ -314,6 +316,15 @@ function refreshData() {
       }
     }
   })
+
+  store.checkAndCreateMaintenanceOrders()
+
+  const afterCount = store.maintenanceOrders.length
+  if (afterCount > beforeCount) {
+    const newOrder = store.maintenanceOrders[0]
+    ElMessage.success(`自动生成维保工单：${newOrder.equipmentName} - 已分配给${newOrder.assigneeTeam}`)
+  }
+
   lastUpdateTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
   setTimeout(() => {
     refreshing.value = false

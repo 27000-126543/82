@@ -143,6 +143,9 @@
             <el-descriptions-item label="面积">
               {{ selectedZone.width * selectedZone.height / 100 }} ㎡
             </el-descriptions-item>
+            <el-descriptions-item label="对应客流区域" :span="2">
+              <el-tag type="info">{{ selectedZone.flowZoneName || selectedZone.name }}</el-tag>
+            </el-descriptions-item>
           </el-descriptions>
         </div>
 
@@ -211,14 +214,19 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useMallStore } from '@/stores/mall'
 import { ElMessage } from 'element-plus'
 import { Refresh, InfoFilled, User, Tools } from '@element-plus/icons-vue'
-import type { MapZone } from '@/types'
+import type { MapZone, Equipment } from '@/types'
+
+interface MapZoneWithFlow extends MapZone {
+  flowZoneName?: string
+  evacuationAlert?: boolean
+}
 
 const mallStore = useMallStore()
 
 const currentFloor = ref(1)
 const updateTime = ref('')
 const dialogVisible = ref(false)
-const selectedZone = ref<MapZone | null>(null)
+const selectedZone = ref<MapZoneWithFlow | null>(null)
 const refreshCounter = ref(0)
 
 const floorNames: Record<number, string> = {
@@ -232,28 +240,60 @@ const floorNames: Record<number, string> = {
 
 const floorName = computed(() => floorNames[currentFloor.value] || '')
 
-const currentMapZones = computed(() => {
+const zoneFlowMapping: Record<string, string> = {
+  '主中庭': '1楼中庭',
+  '2楼中庭': '2楼服饰区',
+  '正门入口': '1楼正门',
+  '优衣库': '1楼中庭',
+  '星巴克': '1楼中庭',
+  'Apple Store': '1楼正门',
+  'H&M': '2楼服饰区',
+  '喜茶': '2楼服饰区',
+  '海底捞火锅': '4楼餐饮区',
+  '万达影城': '5楼影院区'
+}
+
+const zoneEquipmentMapping: Record<string, string[]> = {
+  '主中庭': ['E004', 'E005', 'E007'],
+  '2楼中庭': ['E005', 'E006', 'E008'],
+  '正门入口': [],
+  '优衣库': ['E001', 'E004'],
+  '星巴克': ['E001', 'E007'],
+  'Apple Store': ['E002', 'E007'],
+  'H&M': ['E005', 'E008'],
+  '喜茶': ['E008'],
+  '海底捞火锅': ['E009'],
+  '万达影城': ['E002']
+}
+
+const currentMapZones = computed<MapZoneWithFlow[]>(() => {
   void refreshCounter.value
   return mallStore.mapZones.map(zone => {
+    const mappedZoneName = zoneFlowMapping[zone.name] || zone.name
+
     const flowData = mallStore.passengerFlows.find(
-      pf => pf.floor === zone.floor && pf.zone.includes(zone.name)
-    ) || mallStore.passengerFlows.find(
-      pf => pf.floor === zone.floor
+      pf => pf.floor === zone.floor && pf.zone === mappedZoneName
     )
 
-    const zoneEquipments = mallStore.equipments.filter(
-      eq => eq.floor === zone.floor &&
-           (zone.name.includes(eq.location) ||
-            eq.location.includes(zone.name) ||
-            zone.type === 'corridor' ||
-            zone.type === 'entrance')
-    )
+    const equipmentIds = zoneEquipmentMapping[zone.name] || []
+    const zoneEquipments = equipmentIds.length > 0
+      ? equipmentIds
+          .map(id => mallStore.equipments.find(e => e.id === id))
+          .filter((e): e is Equipment => e !== undefined)
+      : mallStore.equipments.filter(
+          eq => eq.floor === zone.floor &&
+                (zone.name.includes(eq.location) ||
+                 eq.location.includes(zone.name) ||
+                 zone.type === 'corridor' ||
+                 zone.type === 'entrance')
+        )
 
     return {
       ...zone,
       passengerFlow: flowData?.currentCount ?? zone.passengerFlow,
       capacity: flowData?.capacity ?? zone.capacity,
       evacuationAlert: flowData?.evacuationAlert ?? false,
+      flowZoneName: mappedZoneName,
       equipments: zoneEquipments.length > 0 ? zoneEquipments : zone.equipments
     }
   })

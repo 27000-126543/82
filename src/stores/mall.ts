@@ -91,18 +91,26 @@ export const useMallStore = defineStore('mall', () => {
   function updateShop(id: string, data: Partial<Shop>) {
     const index = shops.value.findIndex(s => s.id === id)
     if (index > -1) {
-      const updated = { ...shops.value[index], ...data }
+      const original = { ...shops.value[index] }
+      const updated = { ...original, ...data }
       const renewalStatus = checkRenewalStatus(updated)
       Object.assign(updated, renewalStatus)
       shops.value[index] = updated
 
-      if (renewalStatus.renewalReminder && !shops.value[index].renewalReminder) {
+      const wasReminder = original.renewalReminder
+      const isReminder = renewalStatus.renewalReminder
+
+      if (isReminder && !wasReminder) {
         addNotification({
           type: 'renewal',
           title: '续约提醒',
           message: `${updated.name} 合同将于${dayjs(updated.contractEnd).diff(dayjs(), 'day')}天后到期，请及时处理`,
           priority: 'high'
         })
+      } else if (!isReminder && wasReminder) {
+        notifications.value = notifications.value.filter(
+          n => !(n.type === 'renewal' && n.message.includes(updated.name))
+        )
       }
     }
   }
@@ -171,13 +179,6 @@ export const useMallStore = defineStore('mall', () => {
     })
   }
 
-  function updateShop(id: string, data: Partial<Shop>) {
-    const index = shops.value.findIndex(s => s.id === id)
-    if (index > -1) {
-      shops.value[index] = { ...shops.value[index], ...data }
-    }
-  }
-
   function approveApplication(type: 'renewal' | 'newTenant', id: string, step: number, comment: string) {
     const list = type === 'renewal' ? renewalApplications : newTenantApplications
     const app = list.value.find(a => a.id === id)
@@ -191,6 +192,9 @@ export const useMallStore = defineStore('mall', () => {
 
         if (step === app.approvals.length) {
           app.status = 'approved'
+          if ('currentStep' in app) {
+            app.currentStep = step
+          }
           addNotification({
             type: 'approval',
             title: '审批完成',
@@ -200,6 +204,13 @@ export const useMallStore = defineStore('mall', () => {
         } else {
           if ('currentStep' in app) {
             app.currentStep = step + 1
+          }
+          if (type === 'newTenant') {
+            const statusMap: Record<number, NewTenantApplication['status']> = {
+              1: 'operation_manager',
+              2: 'gm'
+            }
+            app.status = statusMap[step] || 'pending'
           }
         }
       }
@@ -337,7 +348,7 @@ export const useMallStore = defineStore('mall', () => {
 
       const hoursSinceLastMaintenance = eq.runHours
       const needsMaintenance = hoursSinceLastMaintenance >= threshold.hours
-      const isMaintenanceDue = dayjs(eq.nextMaintenance).isSameOrBefore(today)
+      const isMaintenanceDue = dayjs(eq.nextMaintenance).valueOf() <= dayjs(today).valueOf()
 
       if (needsMaintenance || isMaintenanceDue) {
         const existingOrder = maintenanceOrders.value.find(
