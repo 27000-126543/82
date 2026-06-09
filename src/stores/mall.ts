@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import dayjs from 'dayjs'
-import type { Shop, RenewalApplication, NewTenantApplication, Equipment, MaintenanceOrder, SparePart, ParkingSpace, ParkingRecord, Member, PassengerFlow, CleaningStaff, CleaningSchedule, SwapRequest, Notification, MapZone } from '@/types'
+import type { Shop, RenewalApplication, NewTenantApplication, Equipment, MaintenanceOrder, SparePart, ParkingSpace, ParkingRecord, Member, PassengerFlow, CleaningStaff, CleaningSchedule, SwapRequest, Notification, MapZone, SecurityStaff, EvacuationTask } from '@/types'
 import { mockShops, mockRenewalApplications, mockNewTenantApplications, mockEquipments, mockMaintenanceOrders, mockSpareParts, mockParkingSpaces, mockParkingRecords, mockMembers, mockPassengerFlows, mockCleaningStaff, mockCleaningSchedules, mockMapZones, mockNotifications } from '@/mock/data'
 
 const generateId = () => Math.random().toString(36).substring(2, 10)
@@ -23,6 +23,15 @@ export const useMallStore = defineStore('mall', () => {
   const notifications = ref<Notification[]>([...mockNotifications])
   const mapZones = ref<MapZone[]>([...mockMapZones])
   const currentFloor = ref<number>(1)
+
+  const securityStaff = ref<SecurityStaff[]>([
+    { id: 'SEC001', name: '王队长', phone: '13800138001', status: 'on_duty' },
+    { id: 'SEC002', name: '李队员', phone: '13800138002', status: 'on_duty' },
+    { id: 'SEC003', name: '张队员', phone: '13800138003', status: 'on_duty' },
+    { id: 'SEC004', name: '刘队员', phone: '13800138004', status: 'off_duty' }
+  ])
+
+  const evacuationTasks = ref<EvacuationTask[]>([])
 
   const expiringShops = computed(() =>
     shops.value.filter(s => s.status === 'expiring' || s.renewalReminder)
@@ -57,6 +66,18 @@ export const useMallStore = defineStore('mall', () => {
 
   const availableSpaces = computed(() =>
     parkingSpaces.value.filter(s => s.status === 'available').length
+  )
+
+  const pendingEvacuationTasks = computed(() =>
+    evacuationTasks.value.filter(t => t.status === 'pending' || t.status === 'in_progress')
+  )
+
+  const completedEvacuationTasks = computed(() =>
+    evacuationTasks.value.filter(t => t.status === 'completed')
+  )
+
+  const onDutySecurityStaff = computed(() =>
+    securityStaff.value.filter(s => s.status === 'on_duty')
   )
 
   function checkRenewalStatus(shop: Shop): Pick<Shop, 'status' | 'renewalReminder'> {
@@ -423,27 +444,180 @@ export const useMallStore = defineStore('mall', () => {
 
   function updatePassengerFlow() {
     passengerFlows.value.forEach(pf => {
+      const pendingTask = evacuationTasks.value.find(
+        t => t.passengerFlowId === pf.id && (t.status === 'pending' || t.status === 'in_progress')
+      )
+
+      if (pendingTask) {
+        return
+      }
+
       const change = Math.floor(Math.random() * 100) - 40
       pf.currentCount = Math.max(0, Math.min(pf.capacity, pf.currentCount + change))
       pf.trend = change > 20 ? 'increasing' : change < -20 ? 'decreasing' : 'stable'
       pf.dailyTotal += Math.abs(change)
 
       const ratio = pf.currentCount / pf.capacity
+      const wasAlerting = pf.evacuationAlert
       pf.evacuationAlert = ratio >= 0.85
-      if (pf.evacuationAlert) {
-        const existingAlert = notifications.value.find(
+
+      if (pf.evacuationAlert && !wasAlerting) {
+        const existingNotification = notifications.value.find(
           n => n.type === 'passenger' && n.message.includes(pf.zone) && !n.read
         )
-        if (!existingAlert) {
+        if (!existingNotification) {
           addNotification({
             type: 'passenger',
             title: '客流超限预警',
-            message: `${pf.zone}当前客流已超过阈值，请注意疏散`,
-            priority: 'high'
+            message: `${pf.zone}当前客流${pf.currentCount}人，已超过阈值${pf.threshold}人，请注意疏散`,
+            priority: 'high',
+            link: `/passenger/alerts`
           })
         }
       }
+
+      if (!pf.evacuationAlert && wasAlerting && !pf.evacuationTaskId) {
+        const existingNotification = notifications.value.find(
+          n => n.type === 'passenger' && n.message.includes(pf.zone) && !n.read
+        )
+        if (existingNotification) {
+          existingNotification.read = true
+        }
+      }
     })
+  }
+
+  function createEvacuationTask(
+    passengerFlowId: string,
+    data: {
+      securityStaffId?: string
+      securityStaffName?: string
+      evacuateMethod?: EvacuationTask['evacuateMethod']
+      evacuateRoute?: string
+      remark?: string
+    }
+  ): EvacuationTask | null {
+    const pf = passengerFlows.value.find(p => p.id === passengerFlowId)
+    if (!pf) return null
+
+    const existingTask = evacuationTasks.value.find(
+      t => t.passengerFlowId === passengerFlowId && (t.status === 'pending' || t.status === 'in_progress')
+    )
+    if (existingTask) return null
+
+    const task: EvacuationTask = {
+      id: 'ET' + generateId().toUpperCase(),
+      passengerFlowId,
+      zone: pf.zone,
+      floor: pf.floor,
+      currentCount: pf.currentCount,
+      capacity: pf.capacity,
+      status: 'pending',
+      ...data,
+      createTime: dayjs().format('YYYY-MM-DD HH:mm:ss')
+    }
+
+    evacuationTasks.value.unshift(task)
+    pf.evacuationTaskId = task.id
+
+    if (data.securityStaffId) {
+      const staff = securityStaff.value.find(s => s.id === data.securityStaffId)
+      if (staff) {
+        staff.status = 'busy'
+        staff.currentZone = pf.zone
+      }
+    }
+
+    addNotification({
+      type: 'passenger',
+      title: '疏散任务已创建',
+      message: `${pf.zone}疏散任务已创建${data.securityStaffName ? `，已指派${data.securityStaffName}前往处理` : '，待指派人员'}`,
+      priority: 'urgent',
+      link: `/passenger/alerts`
+    })
+
+    return task
+  }
+
+  function startEvacuationTask(taskId: string) {
+    const task = evacuationTasks.value.find(t => t.id === taskId)
+    if (task && task.status === 'pending') {
+      task.status = 'in_progress'
+      task.startTime = dayjs().format('YYYY-MM-DD HH:mm:ss')
+
+      const pf = passengerFlows.value.find(p => p.id === task.passengerFlowId)
+      if (pf) {
+        addNotification({
+          type: 'passenger',
+          title: '疏散任务开始',
+          message: `${pf.zone}疏散任务已开始处理`,
+          priority: 'high',
+          link: `/passenger/alerts`
+        })
+      }
+    }
+  }
+
+  function completeEvacuationTask(taskId: string, resolveMethod: string, remark?: string) {
+    const task = evacuationTasks.value.find(t => t.id === taskId)
+    if (!task) return
+
+    task.status = 'completed'
+    task.completeTime = dayjs().format('YYYY-MM-DD HH:mm:ss')
+    task.resolveMethod = resolveMethod
+    if (remark) {
+      task.remark = task.remark ? `${task.remark}；${remark}` : remark
+    }
+    task.operator = '当前用户'
+
+    const pf = passengerFlows.value.find(p => p.id === task.passengerFlowId)
+    if (pf) {
+      pf.evacuationAlert = false
+      pf.evacuationTaskId = undefined
+    }
+
+    if (task.securityStaffId) {
+      const staff = securityStaff.value.find(s => s.id === task.securityStaffId)
+      if (staff) {
+        staff.status = 'on_duty'
+        staff.currentZone = undefined
+      }
+    }
+
+    const notificationsToUpdate = notifications.value.filter(
+      n => n.type === 'passenger' && n.message.includes(task.zone) && !n.read
+    )
+    notificationsToUpdate.forEach(n => {
+      n.read = true
+    })
+
+    addNotification({
+      type: 'passenger',
+      title: '疏散任务完成',
+      message: `${task.zone}疏散任务已完成，处理方式：${resolveMethod}`,
+      priority: 'medium',
+      link: `/passenger/alerts`
+    })
+  }
+
+  function cancelEvacuationTask(taskId: string) {
+    const task = evacuationTasks.value.find(t => t.id === taskId)
+    if (!task) return
+
+    task.status = 'cancelled'
+
+    const pf = passengerFlows.value.find(p => p.id === task.passengerFlowId)
+    if (pf) {
+      pf.evacuationTaskId = undefined
+    }
+
+    if (task.securityStaffId) {
+      const staff = securityStaff.value.find(s => s.id === task.securityStaffId)
+      if (staff) {
+        staff.status = 'on_duty'
+        staff.currentZone = undefined
+      }
+    }
   }
 
   function generateCleaningSchedule() {
@@ -601,14 +775,17 @@ export const useMallStore = defineStore('mall', () => {
     maintenanceOrders, spareParts, parkingSpaces, parkingRecords, members,
     passengerFlows, cleaningStaff, cleaningSchedules, swapRequests,
     notifications, mapZones, currentFloor,
+    securityStaff, evacuationTasks,
     expiringShops, pendingApprovals, faultEquipments, lowStockParts,
     evacuationZones, unreadNotifications, occupiedSpaces, totalSpaces, availableSpaces,
+    pendingEvacuationTasks, completedEvacuationTasks, onDutySecurityStaff,
     addShop, updateShop, checkRenewalStatus, createNewTenantApplication,
     createRenewalApplication, approveApplication, rejectApplication,
     updateEquipmentStatus, createMaintenanceOrder, updateMaintenanceOrder,
     checkAndCreateMaintenanceOrders, updateEquipmentRunHours,
     calculateParkingFee, processParkingEntry, processParkingExit,
     updatePassengerFlow, generateCleaningSchedule, requestSwap, approveSwap, rejectSwap,
-    addNotification, markNotificationRead, markAllNotificationsRead, getReportData
+    addNotification, markNotificationRead, markAllNotificationsRead, getReportData,
+    createEvacuationTask, startEvacuationTask, completeEvacuationTask, cancelEvacuationTask
   }
 })

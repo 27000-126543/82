@@ -117,17 +117,29 @@
           v-for="n in notifications"
           :key="n.id"
           class="notification-item"
-          :class="{ unread: !n.read }"
-          @click="markRead(n.id)"
+          :class="{ unread: !n.read, clickable: n.link }"
+          @click="handleNotificationClick(n)"
         >
           <div class="notification-header">
             <div class="notification-title">
               <span class="priority-tag" :class="n.priority">{{ getPriorityText(n.priority) }}</span>
               {{ n.title }}
+              <el-tag v-if="!n.read" type="danger" size="small" effect="dark" style="margin-left: 6px;">
+                新消息
+              </el-tag>
             </div>
             <span class="notification-time">{{ n.time }}</span>
           </div>
           <div class="notification-message">{{ n.message }}</div>
+          <div v-if="n.link" class="notification-footer">
+            <span class="link-hint">
+              <el-icon><Position /></el-icon>
+              点击查看详情
+            </span>
+            <el-tag v-if="isProcessedNotification(n)" type="success" size="small">
+              已处理
+            </el-tag>
+          </div>
         </div>
       </div>
     </el-drawer>
@@ -136,10 +148,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useMallStore } from '@/stores/mall'
+import { Position } from '@element-plus/icons-vue'
+import type { Notification } from '@/types'
 
 const route = useRoute()
+const router = useRouter()
 const store = useMallStore()
 
 const activeMenu = computed(() => route.path)
@@ -162,6 +177,25 @@ function markAllRead() {
   store.markAllNotificationsRead()
 }
 
+function isProcessedNotification(n: Notification) {
+  if (n.type !== 'passenger') return false
+  if (!n.read) return false
+
+  const processedKeywords = ['完成', '已处理', '已读']
+  return processedKeywords.some(keyword => n.title.includes(keyword) || n.message.includes(keyword))
+}
+
+function handleNotificationClick(n: Notification) {
+  if (!n.read) {
+    markRead(n.id)
+  }
+
+  if (n.link) {
+    showNotifications.value = false
+    router.push(n.link)
+  }
+}
+
 let timer: number | null = null
 
 onMounted(() => {
@@ -174,3 +208,106 @@ onUnmounted(() => {
   if (timer) clearInterval(timer)
 })
 </script>
+
+<style lang="scss" scoped>
+.notification-item {
+  padding: 14px 16px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  transition: all 0.2s ease;
+
+  &.unread {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+  }
+
+  &.clickable {
+    cursor: pointer;
+
+    &:hover {
+      background: #f1f5f9;
+      transform: translateX(4px);
+    }
+  }
+
+  .notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 8px;
+
+    .notification-title {
+      display: flex;
+      align-items: center;
+      font-weight: 600;
+      color: #1e293b;
+      font-size: 14px;
+
+      .priority-tag {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        margin-right: 8px;
+
+        &.urgent {
+          background: #fee2e2;
+          color: #dc2626;
+        }
+
+        &.high {
+          background: #fef3c7;
+          color: #d97706;
+        }
+
+        &.medium {
+          background: #dbeafe;
+          color: #2563eb;
+        }
+
+        &.low {
+          background: #d1fae5;
+          color: #059669;
+        }
+      }
+    }
+
+    .notification-time {
+      font-size: 11px;
+      color: #94a3b8;
+      flex-shrink: 0;
+      margin-left: 12px;
+    }
+  }
+
+  .notification-message {
+    font-size: 13px;
+    color: #475569;
+    line-height: 1.5;
+    margin-bottom: 8px;
+  }
+
+  .notification-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 8px;
+    border-top: 1px dashed #e2e8f0;
+
+    .link-hint {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #3b82f6;
+
+      .el-icon {
+        font-size: 12px;
+      }
+    }
+  }
+}
+</style>

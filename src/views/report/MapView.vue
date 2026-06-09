@@ -54,6 +54,23 @@
           </div>
         </div>
         <div class="legend-section">
+          <div class="legend-label">客流数据来源</div>
+          <div class="legend-items">
+            <div class="legend-item">
+              <el-tag type="success" size="small">实时客流</el-tag>
+              <span>公共区域</span>
+            </div>
+            <div class="legend-item">
+              <el-tag type="warning" size="small">商铺静态</el-tag>
+              <span>已接入店铺</span>
+            </div>
+            <div class="legend-item">
+              <el-tag type="info" size="small">未接入</el-tag>
+              <span>无实时数据</span>
+            </div>
+          </div>
+        </div>
+        <div class="legend-section">
           <div class="legend-label">设备状态</div>
           <div class="legend-items">
             <div class="legend-item">
@@ -95,14 +112,20 @@
             v-for="zone in floorZones"
             :key="zone.id"
             :class="['map-zone', zone.type, { 
-              'alert-blink': zone.evacuationAlert,
-              'density-alert': zone.passengerFlow / zone.capacity >= 0.85
+              'alert-blink': zone.evacuationAlert && zone.flowSource === 'realtime',
+              'density-alert': zone.flowSource === 'realtime' && zone.passengerFlow / zone.capacity >= 0.85,
+              'shop-static': zone.flowSource === 'shop',
+              'flow-unavailable': zone.flowSource === 'unavailable'
             }]"
             :style="getZoneStyle(zone)"
             @click="handleZoneClick(zone)"
           >
             <span class="zone-name">{{ zone.name }}</span>
-            <span class="zone-flow">{{ Math.round(zone.passengerFlow / zone.capacity * 100) }}%</span>
+            <span class="zone-flow" :class="{ 'dimmed': zone.flowSource !== 'realtime' }">
+              {{ zone.flowSource === 'unavailable' ? '--' : Math.round(zone.passengerFlow / zone.capacity * 100) + '%' }}
+            </span>
+            <span v-if="zone.flowSource === 'shop'" class="flow-badge shop">商铺</span>
+            <span v-else-if="zone.flowSource === 'unavailable'" class="flow-badge unavailable">未接入</span>
             <div v-if="zone.equipments && zone.equipments.length > 0" class="zone-equipment">
               <div
                 v-for="eq in zone.equipments.slice(0, 3)"
@@ -119,7 +142,7 @@
     <el-dialog
       v-model="dialogVisible"
       :title="selectedZone?.name || '区域详情'"
-      width="600px"
+      width="650px"
       class="zone-detail-dialog"
     >
       <div v-if="selectedZone" class="zone-detail">
@@ -143,8 +166,19 @@
             <el-descriptions-item label="面积">
               {{ selectedZone.width * selectedZone.height / 100 }} ㎡
             </el-descriptions-item>
-            <el-descriptions-item label="对应客流区域" :span="2">
-              <el-tag type="info">{{ selectedZone.flowZoneName || selectedZone.name }}</el-tag>
+            <el-descriptions-item label="客流数据来源" :span="2">
+              <el-tag v-if="selectedZone.flowSource === 'realtime'" type="success">
+                <el-icon><Connection /></el-icon>
+                实时客流监控
+              </el-tag>
+              <el-tag v-else-if="selectedZone.flowSource === 'shop'" type="warning">
+                <el-icon><DataAnalysis /></el-icon>
+                商铺经营统计数据
+              </el-tag>
+              <el-tag v-else type="info">
+                <el-icon><Warning /></el-icon>
+                未接入实时客流系统
+              </el-tag>
             </el-descriptions-item>
           </el-descriptions>
         </div>
@@ -153,20 +187,22 @@
           <div class="section-title">
             <el-icon><User /></el-icon>
             客流数据
-            <el-tag v-if="selectedZone.flowUnavailable" type="info" size="small" style="margin-left: 8px;">
-              未接入实时客流
-            </el-tag>
-            <el-tag v-else-if="selectedZone.type === 'shop'" type="warning" size="small" style="margin-left: 8px;">
-              商铺静态客流
-            </el-tag>
-            <el-tag v-else type="success" size="small" style="margin-left: 8px;">
+            <el-tag v-if="selectedZone.flowSource === 'realtime'" type="success" size="small" style="margin-left: 8px;">
               实时客流
+            </el-tag>
+            <el-tag v-else-if="selectedZone.flowSource === 'shop'" type="warning" size="small" style="margin-left: 8px;">
+              商铺统计客流
+            </el-tag>
+            <el-tag v-else type="info" size="small" style="margin-left: 8px;">
+              未接入
             </el-tag>
           </div>
           <div class="flow-stats">
             <div class="flow-stat">
               <div class="stat-label">当前客流</div>
-              <div class="stat-value">{{ selectedZone.passengerFlow }}</div>
+              <div class="stat-value" :class="{ 'text-muted': selectedZone.flowSource === 'unavailable' }">
+                {{ selectedZone.flowSource === 'unavailable' ? '--' : selectedZone.passengerFlow }}
+              </div>
             </div>
             <div class="flow-stat">
               <div class="stat-label">最大容量</div>
@@ -176,28 +212,38 @@
               <div class="stat-label">占用率</div>
               <div class="stat-value">
                 <el-progress
-                  :percentage="Math.round(selectedZone.passengerFlow / selectedZone.capacity * 100)"
-                  :color="getFlowColor(selectedZone.passengerFlow / selectedZone.capacity)"
+                  :percentage="selectedZone.flowSource === 'unavailable' ? 0 : Math.round(selectedZone.passengerFlow / selectedZone.capacity * 100)"
+                  :color="getFlowColor(selectedZone.flowSource === 'unavailable' ? 0 : selectedZone.passengerFlow / selectedZone.capacity)"
+                  :status="selectedZone.flowSource === 'unavailable' ? 'exception' : undefined"
                 />
               </div>
             </div>
           </div>
-          <div v-if="selectedZone.flowUnavailable" class="flow-notice">
+          <div v-if="selectedZone.flowSource === 'unavailable'" class="flow-notice unavailable">
             <el-icon><InfoFilled /></el-icon>
-            <span>该区域暂未接入实时客流监控系统，当前显示为预设静态数据</span>
+            <span>该区域暂未接入实时客流监控系统，当前显示容量为预设值，客流数据待接入</span>
           </div>
-          <div v-else-if="selectedZone.type === 'shop'" class="flow-notice">
+          <div v-else-if="selectedZone.flowSource === 'shop'" class="flow-notice shop">
             <el-icon><InfoFilled /></el-icon>
-            <span>商铺客流为经营数据统计值，公共区域告警不会影响本区域状态</span>
+            <span>该区域为独立商铺，客流数据来自经营统计，公共区域客流告警不会影响本区域状态</span>
+          </div>
+          <div v-else-if="selectedZone.evacuationAlert" class="flow-notice alert">
+            <el-icon><Warning /></el-icon>
+            <span>当前客流已超过安全阈值，建议立即启动疏散预案</span>
+          </div>
+          <div v-else class="flow-notice normal">
+            <el-icon><CircleCheck /></el-icon>
+            <span>客流状态正常，实时数据每5秒自动刷新</span>
           </div>
         </div>
 
-        <div class="detail-section" v-if="selectedZone.equipments && selectedZone.equipments.length > 0">
+        <div class="detail-section">
           <div class="section-title">
             <el-icon><Tools /></el-icon>
-            设备列表
+            关联设备
           </div>
-          <el-table :data="selectedZone.equipments" size="small" border>
+          <el-empty v-if="!selectedZone.equipments || selectedZone.equipments.length === 0" description="暂无接入设备" :image-size="80" />
+          <el-table v-else :data="selectedZone.equipments" size="small" border>
             <el-table-column prop="name" label="设备名称" />
             <el-table-column prop="type" label="设备类型">
               <template #default="scope">
@@ -218,9 +264,90 @@
             </el-table-column>
           </el-table>
         </div>
+
+        <div v-if="selectedZone.flowSource === 'realtime' && selectedZone.evacuationAlert" class="detail-section action-section">
+          <div class="section-title">
+            <el-icon><Warning /></el-icon>
+            应急处置
+            <el-tag type="danger" effect="dark" size="small" style="margin-left: 8px;">
+              客流超限告警中
+            </el-tag>
+          </div>
+          <div class="action-buttons">
+            <el-button type="danger" @click="openEvacuationDialog">
+              <el-icon><Guide /></el-icon>
+              发起疏散任务
+            </el-button>
+            <el-button type="warning" @click="handleCallSecurity">
+              <el-icon><Phone /></el-icon>
+              一键呼叫安保
+            </el-button>
+            <el-button type="info" @click="handleViewAlertList">
+              <el-icon><List /></el-icon>
+              查看所有告警
+            </el-button>
+          </div>
+        </div>
       </div>
       <template #footer>
         <el-button @click="dialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="evacuationDialogVisible"
+      title="发起疏散任务"
+      width="550px"
+      class="evacuation-dialog"
+    >
+      <el-form :model="evacuationForm" :rules="evacuationRules" ref="evacuationFormRef" label-width="100px">
+        <el-form-item label="告警区域">
+          <el-input :model-value="selectedZone?.name" disabled />
+        </el-form-item>
+        <el-form-item label="当前人数">
+          <el-input :model-value="selectedZone?.passengerFlow" disabled />
+        </el-form-item>
+        <el-form-item label="容量占比">
+          <el-tag type="danger" effect="dark">
+            {{ selectedZone ? Math.round(selectedZone.passengerFlow / selectedZone.capacity * 100) : 0 }}%
+          </el-tag>
+        </el-form-item>
+        <el-form-item label="指派安保" prop="securityStaffId">
+          <el-select v-model="evacuationForm.securityStaffId" placeholder="请选择安保人员" style="width: 100%">
+            <el-option
+              v-for="staff in availableSecurityStaff"
+              :key="staff.id"
+              :label="`${staff.name} - ${staff.status === 'on_duty' ? '在岗' : '忙碌'}`"
+              :value="staff.id"
+              :disabled="staff.status !== 'on_duty'"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="疏散方式" prop="evacuateMethod">
+          <el-radio-group v-model="evacuationForm.evacuateMethod">
+            <el-radio value="broadcast">广播引导</el-radio>
+            <el-radio value="manual">人工引导</el-radio>
+            <el-radio value="emergency">紧急疏散</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="疏散路线" prop="evacuateRoute">
+          <el-select v-model="evacuationForm.evacuateRoute" placeholder="请选择疏散路线" style="width: 100%">
+            <el-option label="1号安全出口" value="1号安全出口" />
+            <el-option label="2号安全出口" value="2号安全出口" />
+            <el-option label="3号安全出口" value="3号安全出口" />
+            <el-option label="就近疏散" value="就近疏散" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="处理备注">
+          <el-input v-model="evacuationForm.remark" type="textarea" :rows="3" placeholder="请输入处理备注（选填）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="evacuationDialogVisible = false">取消</el-button>
+        <el-button type="danger" @click="handleSubmitEvacuation">
+          <el-icon><Warning /></el-icon>
+          提交疏散任务
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -229,15 +356,26 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useMallStore } from '@/stores/mall'
-import { ElMessage } from 'element-plus'
-import { Refresh, InfoFilled, User, Tools } from '@element-plus/icons-vue'
-import type { MapZone, Equipment } from '@/types'
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { Refresh, InfoFilled, User, Tools, Warning, Guide, Phone, List, Connection, DataAnalysis, CircleCheck } from '@element-plus/icons-vue'
+import type { MapZone, Equipment, EvacuationTask } from '@/types'
+
+const router = useRouter()
 
 interface MapZoneWithFlow extends MapZone {
   flowZoneName?: string
   evacuationAlert?: boolean
   hasIndependentFlow?: boolean
-  flowUnavailable?: boolean
+  flowSource?: 'realtime' | 'shop' | 'unavailable'
+  flowData?: {
+    zone: string
+    currentCount: number
+    capacity: number
+    threshold: number
+    trend?: string
+  } | null
+  passengerFlowId?: string
 }
 
 const mallStore = useMallStore()
@@ -247,6 +385,28 @@ const updateTime = ref('')
 const dialogVisible = ref(false)
 const selectedZone = ref<MapZoneWithFlow | null>(null)
 const refreshCounter = ref(0)
+
+const evacuationDialogVisible = ref(false)
+const evacuationFormRef = ref<FormInstance>()
+const evacuationForm = ref({
+  securityStaffId: '',
+  securityStaffName: '',
+  evacuateMethod: 'broadcast' as EvacuationTask['evacuateMethod'],
+  evacuateRoute: '',
+  remark: ''
+})
+
+const evacuationRules: FormRules = {
+  securityStaffId: [
+    { required: true, message: '请选择安保人员', trigger: 'change' }
+  ],
+  evacuateMethod: [
+    { required: true, message: '请选择疏散方式', trigger: 'change' }
+  ],
+  evacuateRoute: [
+    { required: true, message: '请选择疏散路线', trigger: 'change' }
+  ]
+}
 
 const floorNames: Record<number, string> = {
   '-1': 'B1层',
@@ -291,6 +451,10 @@ const zoneEquipmentMapping: Record<string, string[]> = {
   '万达影城': ['E002']
 }
 
+const availableSecurityStaff = computed(() =>
+  mallStore.securityStaff.filter(s => s.status !== 'off_duty')
+)
+
 const currentMapZones = computed<MapZoneWithFlow[]>(() => {
   void refreshCounter.value
   return mallStore.mapZones.map(zone => {
@@ -298,11 +462,20 @@ const currentMapZones = computed<MapZoneWithFlow[]>(() => {
     const hasIndependentFlow = zoneHasIndependentFlow[zone.name] ?? isPublicZone
     const mappedZoneName = publicZoneFlowMapping[zone.name] || zone.name
 
+    let flowSource: 'realtime' | 'shop' | 'unavailable' = 'unavailable'
     let flowData = null
+    let passengerFlowId: string | undefined
+
     if (isPublicZone && hasIndependentFlow) {
       flowData = mallStore.passengerFlows.find(
         pf => pf.floor === zone.floor && pf.zone === mappedZoneName
       )
+      if (flowData) {
+        flowSource = 'realtime'
+        passengerFlowId = flowData.id
+      }
+    } else if (zone.type === 'shop' && zone.passengerFlow > 0) {
+      flowSource = 'shop'
     }
 
     const equipmentIds = zoneEquipmentMapping[zone.name] || []
@@ -310,23 +483,19 @@ const currentMapZones = computed<MapZoneWithFlow[]>(() => {
       ? equipmentIds
           .map(id => mallStore.equipments.find(e => e.id === id))
           .filter((e): e is Equipment => e !== undefined)
-      : mallStore.equipments.filter(
-          eq => eq.floor === zone.floor &&
-                (zone.name.includes(eq.location) ||
-                 eq.location.includes(zone.name) ||
-                 zone.type === 'corridor' ||
-                 zone.type === 'entrance')
-        )
+      : []
 
     return {
       ...zone,
       passengerFlow: flowData?.currentCount ?? zone.passengerFlow,
       capacity: flowData?.capacity ?? zone.capacity,
       evacuationAlert: flowData?.evacuationAlert ?? false,
-      flowZoneName: isPublicZone ? mappedZoneName : `${zone.name}（商铺客流）`,
+      flowZoneName: isPublicZone ? mappedZoneName : zone.name,
       hasIndependentFlow,
-      flowUnavailable: !isPublicZone && !hasIndependentFlow,
-      equipments: zoneEquipments.length > 0 ? zoneEquipments : zone.equipments
+      flowSource,
+      flowData,
+      passengerFlowId,
+      equipments: zoneEquipments
     }
   })
 })
@@ -335,7 +504,14 @@ const floorZones = computed(() =>
   currentMapZones.value.filter(z => z.floor === currentFloor.value)
 )
 
-const getHeatColor = (ratio: number, type: string) => {
+const getHeatColor = (ratio: number, type: string, flowSource: string) => {
+  if (flowSource === 'unavailable') {
+    return '#e5e7eb'
+  }
+  if (flowSource === 'shop') {
+    return '#93c5fd'
+  }
+
   const baseColors: Record<string, string[]> = {
     shop: ['#dbeafe', '#bfdbfe', '#93c5fd', '#60a5fa', '#3b82f6'],
     corridor: ['#f1f5f9', '#e2e8f0', '#cbd5e1', '#94a3b8', '#64748b'],
@@ -348,16 +524,18 @@ const getHeatColor = (ratio: number, type: string) => {
   return colors[Math.max(0, index)]
 }
 
-const getZoneStyle = (zone: MapZone) => {
-  const ratio = zone.passengerFlow / zone.capacity
-  const baseColor = getHeatColor(ratio, zone.type)
+const getZoneStyle = (zone: MapZoneWithFlow) => {
+  const ratio = zone.flowSource === 'unavailable' ? 0 : zone.passengerFlow / zone.capacity
+  const baseColor = getHeatColor(ratio, zone.type, zone.flowSource || 'unavailable')
+  const opacity = zone.flowSource === 'unavailable' ? 0.4 : 0.7 + ratio * 0.3
+
   return {
     left: zone.x + 'px',
     top: zone.y + 'px',
     width: zone.width + 'px',
     height: zone.height + 'px',
     background: `linear-gradient(135deg, ${baseColor}dd 0%, ${baseColor}99 100%)`,
-    opacity: 0.7 + ratio * 0.3
+    opacity
   }
 }
 
@@ -430,9 +608,87 @@ const handleRefresh = () => {
   ElMessage.success('数据已刷新')
 }
 
-const handleZoneClick = (zone: MapZone) => {
+const handleZoneClick = (zone: MapZoneWithFlow) => {
   selectedZone.value = zone
   dialogVisible.value = true
+}
+
+const openEvacuationDialog = () => {
+  if (!selectedZone.value?.passengerFlowId) {
+    ElMessage.warning('该区域无法发起疏散任务')
+    return
+  }
+  evacuationForm.value = {
+    securityStaffId: '',
+    securityStaffName: '',
+    evacuateMethod: 'broadcast',
+    evacuateRoute: '',
+    remark: ''
+  }
+  evacuationDialogVisible.value = true
+}
+
+const handleCallSecurity = () => {
+  if (!selectedZone.value?.passengerFlowId) return
+
+  const onDutyStaff = mallStore.securityStaff.find(s => s.status === 'on_duty')
+  if (!onDutyStaff) {
+    ElMessage.warning('暂无在岗安保人员')
+    return
+  }
+
+  ElMessageBox.confirm(
+    `确定呼叫 ${onDutyStaff.name} 前往 ${selectedZone.value.name} 处置吗？`,
+    '呼叫安保',
+    {
+      confirmButtonText: '确认呼叫',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  ).then(() => {
+    const task = mallStore.createEvacuationTask(selectedZone.value!.passengerFlowId!, {
+      securityStaffId: onDutyStaff.id,
+      securityStaffName: onDutyStaff.name,
+      evacuateMethod: 'manual',
+      evacuateRoute: '就近疏散',
+      remark: `一键呼叫安保处置`
+    })
+
+    if (task) {
+      mallStore.startEvacuationTask(task.id)
+      ElMessage.success(`已呼叫 ${onDutyStaff.name} 前往处置`)
+    }
+  }).catch(() => {})
+}
+
+const handleViewAlertList = () => {
+  dialogVisible.value = false
+  router.push('/passenger/alerts')
+}
+
+const handleSubmitEvacuation = async () => {
+  if (!evacuationFormRef.value || !selectedZone.value?.passengerFlowId) return
+
+  const valid = await evacuationFormRef.value.validate().catch(() => false)
+  if (!valid) return
+
+  const staff = mallStore.securityStaff.find(s => s.id === evacuationForm.value.securityStaffId)
+
+  const task = mallStore.createEvacuationTask(selectedZone.value.passengerFlowId!, {
+    securityStaffId: evacuationForm.value.securityStaffId,
+    securityStaffName: staff?.name,
+    evacuateMethod: evacuationForm.value.evacuateMethod,
+    evacuateRoute: evacuationForm.value.evacuateRoute,
+    remark: evacuationForm.value.remark
+  })
+
+  if (task) {
+    ElMessage.success('疏散任务已创建，相关人员已收到通知')
+    evacuationDialogVisible.value = false
+    dialogVisible.value = false
+  } else {
+    ElMessage.error('该区域已有待处理的疏散任务')
+  }
 }
 
 let updateTimer: number | null = null
@@ -466,7 +722,7 @@ onUnmounted(() => {
 }
 
 .map-legend {
-  width: 200px;
+  width: 220px;
   background: white;
   border-radius: 8px;
   padding: 16px;
@@ -638,6 +894,16 @@ onUnmounted(() => {
     border-color: rgba(255, 255, 255, 1);
   }
 
+  &.flow-unavailable {
+    color: #94a3b8;
+    text-shadow: none;
+    border-style: dashed;
+  }
+
+  &.shop-static {
+    border-color: rgba(255, 255, 255, 0.9);
+  }
+
   &.alert-blink {
     border: 3px solid #ef4444;
     animation: alertBlink 1s infinite;
@@ -660,6 +926,29 @@ onUnmounted(() => {
     font-size: 10px;
     opacity: 0.9;
     margin-top: 2px;
+
+    &.dimmed {
+      opacity: 0.6;
+    }
+  }
+
+  .flow-badge {
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.3);
+
+    &.shop {
+      background: #f59e0b;
+    }
+
+    &.unavailable {
+      background: #64748b;
+    }
   }
 
   .zone-equipment {
@@ -725,6 +1014,13 @@ onUnmounted(() => {
       color: #1e293b;
       margin-bottom: 12px;
     }
+
+    &.action-section {
+      background: linear-gradient(135deg, #fef2f2 0%, #fff5f5 100%);
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 16px;
+    }
   }
 
   .flow-stats {
@@ -748,6 +1044,10 @@ onUnmounted(() => {
         font-size: 24px;
         font-weight: 700;
         color: #1e293b;
+
+        &.text-muted {
+          color: #94a3b8;
+        }
       }
     }
   }
@@ -755,11 +1055,8 @@ onUnmounted(() => {
   .flow-notice {
     margin-top: 12px;
     padding: 12px;
-    background: #f0f9ff;
-    border-left: 3px solid #3b82f6;
     border-radius: 4px;
     font-size: 12px;
-    color: #1e40af;
     display: flex;
     align-items: flex-start;
     gap: 6px;
@@ -768,6 +1065,36 @@ onUnmounted(() => {
       margin-top: 1px;
       flex-shrink: 0;
     }
+
+    &.unavailable {
+      background: #f1f5f9;
+      border-left: 3px solid #64748b;
+      color: #475569;
+    }
+
+    &.shop {
+      background: #fffbeb;
+      border-left: 3px solid #f59e0b;
+      color: #92400e;
+    }
+
+    &.alert {
+      background: #fef2f2;
+      border-left: 3px solid #ef4444;
+      color: #991b1b;
+    }
+
+    &.normal {
+      background: #f0fdf4;
+      border-left: 3px solid #10b981;
+      color: #166534;
+    }
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
   }
 
   :deep(.el-descriptions__label) {
@@ -802,5 +1129,9 @@ onUnmounted(() => {
     background: #fee2e2;
     color: #991b1b;
   }
+}
+
+.text-muted {
+  color: #94a3b8;
 }
 </style>

@@ -143,6 +143,34 @@ export interface Member {
   points: number
 }
 
+export interface SecurityStaff {
+  id: string
+  name: string
+  phone: string
+  status: 'on_duty' | 'off_duty' | 'busy'
+  currentZone?: string
+}
+
+export interface EvacuationTask {
+  id: string
+  passengerFlowId: string
+  zone: string
+  floor: number
+  currentCount: number
+  capacity: number
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  securityStaffId?: string
+  securityStaffName?: string
+  evacuateMethod?: 'broadcast' | 'manual' | 'emergency'
+  evacuateRoute?: string
+  remark?: string
+  createTime: string
+  startTime?: string
+  completeTime?: string
+  operator?: string
+  resolveMethod?: string
+}
+
 export interface PassengerFlow {
   id: string
   zone: string
@@ -154,6 +182,7 @@ export interface PassengerFlow {
   hourlyData: number[]
   dailyTotal: number
   evacuationAlert?: boolean
+  evacuationTaskId?: string
 }
 
 export interface CleaningStaff {
