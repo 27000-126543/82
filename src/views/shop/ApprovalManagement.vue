@@ -167,27 +167,42 @@
         </el-descriptions>
 
         <div class="approval-flow">
-          <h4>审批流程</h4>
+          <h4>审批流程
+            <el-tag v-if="canApproveCurrent()" type="warning" size="small" style="margin-left: 8px;">
+              当前待审批：{{ currentApplication.approvals[currentApplicationStep - 1]?.role }}
+            </el-tag>
+            <el-tag v-else-if="currentApplication.status === 'approved'" type="success" size="small" style="margin-left: 8px;">
+              审批已完成
+            </el-tag>
+            <el-tag v-else-if="currentApplication.status === 'rejected'" type="danger" size="small" style="margin-left: 8px;">
+              审批已驳回
+            </el-tag>
+          </h4>
           <div class="timeline">
             <div 
               v-for="approval in currentApplication.approvals" 
               :key="approval.step" 
               class="timeline-item"
               :class="{ 
-                'is-active': getStepStatus(approval) === 'process', 
-                'is-done': getStepStatus(approval) === 'finish', 
-                'is-rejected': getStepStatus(approval) === 'error' 
+                'is-active': getStepStatus(approval, currentApplicationStep) === 'process', 
+                'is-done': getStepStatus(approval, currentApplicationStep) === 'finish', 
+                'is-rejected': getStepStatus(approval, currentApplicationStep) === 'error',
+                'is-wait': getStepStatus(approval, currentApplicationStep) === 'wait'
               }"
             >
               <div class="timeline-node">
-                <el-icon v-if="getStepStatus(approval) === 'finish'"><CircleCheckFilled /></el-icon>
-                <el-icon v-else-if="getStepStatus(approval) === 'error'"><CircleCloseFilled /></el-icon>
+                <el-icon v-if="getStepStatus(approval, currentApplicationStep) === 'finish'"><CircleCheckFilled /></el-icon>
+                <el-icon v-else-if="getStepStatus(approval, currentApplicationStep) === 'error'"><CircleCloseFilled /></el-icon>
+                <el-icon v-else-if="getStepStatus(approval, currentApplicationStep) === 'process'"><Loading class="rotate" /></el-icon>
                 <span v-else>{{ approval.step }}</span>
               </div>
               <div class="timeline-content">
                 <div class="timeline-header">
                   <span class="role">{{ approval.role }}</span>
-                  <span class="status">{{ getApprovalStatusText(approval.status) }}</span>
+                  <span class="status" :class="{
+                    'status-process': getStepStatus(approval, currentApplicationStep) === 'process',
+                    'status-wait': getStepStatus(approval, currentApplicationStep) === 'wait'
+                  }">{{ getApprovalStatusText(approval, currentApplicationStep) }}</span>
                 </div>
                 <div v-if="approval.approver" class="approver">审批人: {{ approval.approver }}</div>
                 <div v-if="approval.comment" class="comment">意见: {{ approval.comment }}</div>
@@ -243,7 +258,7 @@
 import { ref, computed } from 'vue'
 import { useMallStore } from '@/stores/mall'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { Check, Close, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
+import { Check, Close, CircleCheckFilled, CircleCloseFilled, Loading } from '@element-plus/icons-vue'
 import type { NewTenantApplication, RenewalApplication, ApprovalRecord } from '@/types'
 
 const store = useMallStore()
@@ -343,17 +358,30 @@ function getCurrentStep(application: NewTenantApplication | RenewalApplication):
   return pendingIndex === -1 ? application.approvals.length : pendingIndex + 1
 }
 
-function getStepStatus(approval: ApprovalRecord): string {
+function getStepStatus(approval: ApprovalRecord, currentStep: number): string {
   if (approval.status === 'approved') return 'finish'
   if (approval.status === 'rejected') return 'error'
-  if (approval.status === 'pending') return 'wait'
+  if (approval.status === 'pending') {
+    if (approval.step === currentStep) return 'process'
+    if (approval.step > currentStep) return 'wait'
+  }
   return 'wait'
 }
 
-function getApprovalStatusText(status: ApprovalRecord['status']): string {
-  const map = { pending: '待审批', approved: '已通过', rejected: '已驳回' }
-  return map[status]
+function getApprovalStatusText(approval: ApprovalRecord, currentStep: number): string {
+  if (approval.status === 'approved') return '已通过'
+  if (approval.status === 'rejected') return '已驳回'
+  if (approval.status === 'pending') {
+    if (approval.step === currentStep) return '审批中'
+    if (approval.step > currentStep) return '未到达'
+  }
+  return '待审批'
 }
+
+const currentApplicationStep = computed(() => {
+  if (!currentApplication.value) return 1
+  return getCurrentStep(currentApplication.value)
+})
 
 function handleViewDetail(type: 'newTenant' | 'renewal', row: NewTenantApplication | RenewalApplication) {
   applicationType.value = type
@@ -509,6 +537,18 @@ async function handleSubmitApproval() {
             }
           }
 
+          &.is-wait {
+            .timeline-node {
+              background: #fff;
+              border-color: #dcdfe6;
+              color: #c0c4cc;
+            }
+
+            .timeline-content {
+              opacity: 0.6;
+            }
+          }
+
           .timeline-node {
             width: 30px;
             height: 30px;
@@ -548,6 +588,17 @@ async function handleSubmitApproval() {
                 padding: 2px 8px;
                 border-radius: 4px;
                 background: #f0f2f5;
+
+                &.status-process {
+                  background: #ecf5ff;
+                  color: #409eff;
+                  font-weight: 500;
+                }
+
+                &.status-wait {
+                  background: #f4f4f5;
+                  color: #909399;
+                }
               }
             }
 
@@ -565,6 +616,19 @@ async function handleSubmitApproval() {
           }
         }
       }
+    }
+  }
+
+  .rotate {
+    animation: rotate 1s linear infinite;
+  }
+
+  @keyframes rotate {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
     }
   }
 }

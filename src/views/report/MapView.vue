@@ -153,6 +153,15 @@
           <div class="section-title">
             <el-icon><User /></el-icon>
             客流数据
+            <el-tag v-if="selectedZone.flowUnavailable" type="info" size="small" style="margin-left: 8px;">
+              未接入实时客流
+            </el-tag>
+            <el-tag v-else-if="selectedZone.type === 'shop'" type="warning" size="small" style="margin-left: 8px;">
+              商铺静态客流
+            </el-tag>
+            <el-tag v-else type="success" size="small" style="margin-left: 8px;">
+              实时客流
+            </el-tag>
           </div>
           <div class="flow-stats">
             <div class="flow-stat">
@@ -172,6 +181,14 @@
                 />
               </div>
             </div>
+          </div>
+          <div v-if="selectedZone.flowUnavailable" class="flow-notice">
+            <el-icon><InfoFilled /></el-icon>
+            <span>该区域暂未接入实时客流监控系统，当前显示为预设静态数据</span>
+          </div>
+          <div v-else-if="selectedZone.type === 'shop'" class="flow-notice">
+            <el-icon><InfoFilled /></el-icon>
+            <span>商铺客流为经营数据统计值，公共区域告警不会影响本区域状态</span>
           </div>
         </div>
 
@@ -219,6 +236,8 @@ import type { MapZone, Equipment } from '@/types'
 interface MapZoneWithFlow extends MapZone {
   flowZoneName?: string
   evacuationAlert?: boolean
+  hasIndependentFlow?: boolean
+  flowUnavailable?: boolean
 }
 
 const mallStore = useMallStore()
@@ -240,17 +259,23 @@ const floorNames: Record<number, string> = {
 
 const floorName = computed(() => floorNames[currentFloor.value] || '')
 
-const zoneFlowMapping: Record<string, string> = {
+const publicZoneFlowMapping: Record<string, string> = {
   '主中庭': '1楼中庭',
   '2楼中庭': '2楼服饰区',
-  '正门入口': '1楼正门',
-  '优衣库': '1楼中庭',
-  '星巴克': '1楼中庭',
-  'Apple Store': '1楼正门',
-  'H&M': '2楼服饰区',
-  '喜茶': '2楼服饰区',
-  '海底捞火锅': '4楼餐饮区',
-  '万达影城': '5楼影院区'
+  '正门入口': '1楼正门'
+}
+
+const zoneHasIndependentFlow: Record<string, boolean> = {
+  '主中庭': true,
+  '2楼中庭': true,
+  '正门入口': true,
+  '优衣库': false,
+  '星巴克': false,
+  'Apple Store': false,
+  'H&M': false,
+  '喜茶': false,
+  '海底捞火锅': false,
+  '万达影城': false
 }
 
 const zoneEquipmentMapping: Record<string, string[]> = {
@@ -269,11 +294,16 @@ const zoneEquipmentMapping: Record<string, string[]> = {
 const currentMapZones = computed<MapZoneWithFlow[]>(() => {
   void refreshCounter.value
   return mallStore.mapZones.map(zone => {
-    const mappedZoneName = zoneFlowMapping[zone.name] || zone.name
+    const isPublicZone = zone.type === 'corridor' || zone.type === 'entrance'
+    const hasIndependentFlow = zoneHasIndependentFlow[zone.name] ?? isPublicZone
+    const mappedZoneName = publicZoneFlowMapping[zone.name] || zone.name
 
-    const flowData = mallStore.passengerFlows.find(
-      pf => pf.floor === zone.floor && pf.zone === mappedZoneName
-    )
+    let flowData = null
+    if (isPublicZone && hasIndependentFlow) {
+      flowData = mallStore.passengerFlows.find(
+        pf => pf.floor === zone.floor && pf.zone === mappedZoneName
+      )
+    }
 
     const equipmentIds = zoneEquipmentMapping[zone.name] || []
     const zoneEquipments = equipmentIds.length > 0
@@ -293,7 +323,9 @@ const currentMapZones = computed<MapZoneWithFlow[]>(() => {
       passengerFlow: flowData?.currentCount ?? zone.passengerFlow,
       capacity: flowData?.capacity ?? zone.capacity,
       evacuationAlert: flowData?.evacuationAlert ?? false,
-      flowZoneName: mappedZoneName,
+      flowZoneName: isPublicZone ? mappedZoneName : `${zone.name}（商铺客流）`,
+      hasIndependentFlow,
+      flowUnavailable: !isPublicZone && !hasIndependentFlow,
       equipments: zoneEquipments.length > 0 ? zoneEquipments : zone.equipments
     }
   })
@@ -717,6 +749,24 @@ onUnmounted(() => {
         font-weight: 700;
         color: #1e293b;
       }
+    }
+  }
+
+  .flow-notice {
+    margin-top: 12px;
+    padding: 12px;
+    background: #f0f9ff;
+    border-left: 3px solid #3b82f6;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #1e40af;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+
+    .el-icon {
+      margin-top: 1px;
+      flex-shrink: 0;
     }
   }
 
